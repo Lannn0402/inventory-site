@@ -2173,6 +2173,37 @@ function _stripImagesForSync(key, value) {
   return value;
 }
 
+async function _cloudWriteItem(key, value) {
+  const CHUNK_MAX = 1500; // 每段最大字元數
+  const baseUrl = _cloudApiUrl + '?action=write&key=' + encodeURIComponent(key) + '&value=';
+  const testUrl = baseUrl + encodeURIComponent(value);
+
+  // 小資料：單次 GET 寫入
+  if (testUrl.length < 7000) {
+    const resp = await fetch(testUrl);
+    const json = await resp.json();
+    return json.ok;
+  }
+
+  // 大資料：分段上傳
+  const chunks = [];
+  for (let i = 0; i < value.length; i += CHUNK_MAX) {
+    chunks.push(value.substring(i, i + CHUNK_MAX));
+  }
+  for (let i = 0; i < chunks.length; i++) {
+    const url = _cloudApiUrl + '?action=wchunk&key=' + encodeURIComponent(key) +
+      '&i=' + i + '&n=' + chunks.length + '&d=' + encodeURIComponent(chunks[i]);
+    const resp = await fetch(url);
+    const json = await resp.json();
+    if (!json.ok) throw new Error('chunk ' + i + ' failed');
+  }
+  // 組裝
+  const doneUrl = _cloudApiUrl + '?action=wdone&key=' + encodeURIComponent(key) + '&n=' + chunks.length;
+  const resp = await fetch(doneUrl);
+  const json = await resp.json();
+  return json.ok;
+}
+
 async function cloudPush(items) {
   if (!_isCloudEnabled()) return;
   _updateCloudLabel('同步中 0/' + items.length, 'cloud-status syncing');
@@ -2183,15 +2214,12 @@ async function cloudPush(items) {
     _updateCloudLabel('同步中 ' + (i+1) + '/' + items.length + ' (' + label + ')', 'cloud-status syncing');
     try {
       const syncValue = _stripImagesForSync(item.key, item.value);
-      const url = _cloudApiUrl +
-        '?action=write&key=' + encodeURIComponent(item.key) +
-        '&value=' + encodeURIComponent(syncValue);
-      const resp = await fetch(url);
-      const json = await resp.json();
-      if (json.ok) ok++;
-      else console.error('寫入失敗:', item.key, json);
+      const success = await _cloudWriteItem(item.key, syncValue);
+      if (success) ok++;
+      else console.error('寫入失敗:', item.key);
     } catch(e) {
       console.error('推送失敗:', item.key, e);
+      _updateCloudLabel('失敗: ' + label, 'cloud-status error');
     }
   }
   if (ok === items.length) {

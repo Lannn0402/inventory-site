@@ -2131,7 +2131,7 @@ async function _bootstrapIfNeeded() {
 const CLOUD_URL_KEY = 'atelier_cloud_url';
 let _cloudApiUrl = '';
 let _cloudSyncTimer = null;
-let _cloudDirtyKeys = new Set();
+let _cloudDirtyKeys = new Map();
 
 async function _loadCloudUrl() {
   try {
@@ -2157,55 +2157,62 @@ function _updateCloudLabel(text, cls) {
   }
 }
 
+function _stripImagesForSync(key, value) {
+  // 產品資料去除 base64 圖片，大幅縮小體積
+  if (key === STORAGE_KEY) {
+    try {
+      const arr = JSON.parse(value);
+      const stripped = arr.map(p => {
+        const copy = Object.assign({}, p);
+        if (copy.image && copy.image.length > 200) copy.image = null;
+        return copy;
+      });
+      return JSON.stringify(stripped);
+    } catch(e) {}
+  }
+  return value;
+}
+
 async function cloudPush(items) {
   if (!_isCloudEnabled()) return;
   _updateCloudLabel('同步中 0/' + items.length, 'cloud-status syncing');
   let ok = 0;
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
-    _updateCloudLabel('同步中 ' + (i+1) + '/' + items.length + ' (' + item.key.replace('atelier_','') + ')', 'cloud-status syncing');
+    const label = item.key.replace('atelier_','');
+    _updateCloudLabel('同步中 ' + (i+1) + '/' + items.length + ' (' + label + ')', 'cloud-status syncing');
     try {
-      await fetch(_cloudApiUrl, {
-        method: 'POST',
-        body: JSON.stringify({ key: item.key, value: item.value }),
-        mode: 'no-cors'
-      });
-      // 等 GAS 處理完成
-      await new Promise(r => setTimeout(r, 5000));
-      ok++;
+      const syncValue = _stripImagesForSync(item.key, item.value);
+      const url = _cloudApiUrl +
+        '?action=write&key=' + encodeURIComponent(item.key) +
+        '&value=' + encodeURIComponent(syncValue);
+      const resp = await fetch(url);
+      const json = await resp.json();
+      if (json.ok) ok++;
+      else console.error('寫入失敗:', item.key, json);
     } catch(e) {
       console.error('推送失敗:', item.key, e);
     }
   }
-  // 用 GET 驗證是否成功寫入
-  _updateCloudLabel('驗證中...', 'cloud-status syncing');
-  await new Promise(r => setTimeout(r, 3000));
-  try {
-    const resp = await fetch(_cloudApiUrl + '?key=__all__');
-    const json = await resp.json();
-    const count = json.ok ? Object.keys(json.data || {}).length : 0;
-    if (count > 0) {
-      _updateCloudLabel('雲端 ✓ (' + count + '項)', 'cloud-status ok');
-      toast('雲端同步完成：' + count + ' 項資料');
-    } else {
-      _updateCloudLabel('寫入失敗', 'cloud-status error');
-      toast('雲端寫入失敗，請確認 Apps Script 已更新並重新部署');
-    }
-  } catch(e) {
-    _updateCloudLabel(ok + '/' + items.length + ' 已送出', 'cloud-status ok');
+  if (ok === items.length) {
+    _updateCloudLabel('雲端 ✓ (' + ok + '項)', 'cloud-status ok');
+    toast('雲端同步完成：' + ok + ' 項資料');
+  } else {
+    _updateCloudLabel(ok + '/' + items.length + ' 成功', 'cloud-status error');
+    toast('部分同步失敗：' + ok + '/' + items.length);
   }
 }
 
 function _scheduleCloudPush(key, value) {
   if (!_isCloudEnabled()) return;
-  _cloudDirtyKeys.add(JSON.stringify({ key, value }));
+  _cloudDirtyKeys.set(key, value);
   clearTimeout(_cloudSyncTimer);
   _cloudSyncTimer = setTimeout(() => {
     const items = [];
-    _cloudDirtyKeys.forEach(s => items.push(JSON.parse(s)));
+    _cloudDirtyKeys.forEach((v, k) => items.push({ key: k, value: v }));
     _cloudDirtyKeys.clear();
     cloudPush(items);
-  }, 2000); // 2秒內的修改合併一次推送
+  }, 2000);
 }
 
 async function cloudPullAll() {

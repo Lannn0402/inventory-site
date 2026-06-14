@@ -2270,7 +2270,7 @@ function showCloudModal() {
       <div class="cloud-modal-actions">
         <button class="btn btn-sm" id="cloudModalClose">關閉</button>
         <button class="btn btn-sm btn-danger" id="cloudModalDisconnect" ${_isCloudEnabled() ? '' : 'style="display:none"'}>斷開連線</button>
-        <button class="btn btn-sm" id="cloudModalPull" ${_isCloudEnabled() ? '' : 'style="display:none"'}>從雲端下載</button>
+        <button class="btn btn-sm" id="cloudModalPull">從雲端下載</button>
         <button class="btn btn-sm btn-primary" id="cloudModalSave">儲存並上傳</button>
       </div>
       <div class="cloud-status" id="cloudModalStatus"></div>
@@ -2285,9 +2285,15 @@ function showCloudModal() {
     div.remove();
   };
   div.querySelector('#cloudModalPull').onclick = async () => {
+    const url = div.querySelector('#cloudUrlInput').value.trim();
+    if (!url || !url.startsWith('https://')) {
+      div.querySelector('#cloudModalStatus').textContent = '請先在上方貼上 https:// 網址';
+      return;
+    }
+    await _saveCloudUrl(url);
     div.querySelector('#cloudModalStatus').textContent = '下載中...';
-    await cloudPullAll();
-    div.remove();
+    const ok = await cloudPullAll();
+    if (ok) div.remove();
   };
   div.querySelector('#cloudModalSave').onclick = async () => {
     const url = div.querySelector('#cloudUrlInput').value.trim();

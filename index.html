@@ -2161,14 +2161,18 @@ async function cloudPush(items) {
   if (!_isCloudEnabled()) return;
   _updateCloudLabel('同步中...', 'cloud-status syncing');
   try {
-    await fetch(_cloudApiUrl, {
+    const resp = await fetch(_cloudApiUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ items }),
-      mode: 'no-cors'
+      redirect: 'follow'
     });
-    // no-cors 拿不到 response，用 GET 驗證
-    _updateCloudLabel('雲端 ✓', 'cloud-status ok');
+    const json = await resp.json();
+    if (json.ok) {
+      _updateCloudLabel('雲端 ✓', 'cloud-status ok');
+    } else {
+      throw new Error('伺服器回應錯誤');
+    }
   } catch(e) {
     console.error('雲端推送失敗', e);
     _updateCloudLabel('同步失敗', 'cloud-status error');

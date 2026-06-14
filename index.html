@@ -2157,6 +2157,33 @@ function _updateCloudLabel(text, cls) {
   }
 }
 
+// JSONP 請求（繞過 CORS）
+let _jsonpId = 0;
+function jsonpFetch(url) {
+  return new Promise((resolve, reject) => {
+    const cbName = '_jpcb_' + (++_jsonpId) + '_' + Date.now();
+    const timeout = setTimeout(() => {
+      delete window[cbName];
+      if (script.parentNode) script.parentNode.removeChild(script);
+      reject(new Error('JSONP timeout'));
+    }, 30000);
+    window[cbName] = function(data) {
+      clearTimeout(timeout);
+      delete window[cbName];
+      if (script.parentNode) script.parentNode.removeChild(script);
+      resolve(data);
+    };
+    const script = document.createElement('script');
+    script.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + cbName;
+    script.onerror = () => {
+      clearTimeout(timeout);
+      delete window[cbName];
+      reject(new Error('JSONP error'));
+    };
+    document.head.appendChild(script);
+  });
+}
+
 function _stripImagesForSync(key, value) {
   // 產品資料去除 base64 圖片，大幅縮小體積
   if (key === STORAGE_KEY) {
@@ -2174,14 +2201,13 @@ function _stripImagesForSync(key, value) {
 }
 
 async function _cloudWriteItem(key, value) {
-  const CHUNK_MAX = 1500; // 每段最大字元數
+  const CHUNK_MAX = 1500;
   const baseUrl = _cloudApiUrl + '?action=write&key=' + encodeURIComponent(key) + '&value=';
   const testUrl = baseUrl + encodeURIComponent(value);
 
-  // 小資料：單次 GET 寫入
+  // 小資料：單次寫入
   if (testUrl.length < 7000) {
-    const resp = await fetch(testUrl);
-    const json = await resp.json();
+    const json = await jsonpFetch(testUrl);
     return json.ok;
   }
 
@@ -2193,14 +2219,11 @@ async function _cloudWriteItem(key, value) {
   for (let i = 0; i < chunks.length; i++) {
     const url = _cloudApiUrl + '?action=wchunk&key=' + encodeURIComponent(key) +
       '&i=' + i + '&n=' + chunks.length + '&d=' + encodeURIComponent(chunks[i]);
-    const resp = await fetch(url);
-    const json = await resp.json();
+    const json = await jsonpFetch(url);
     if (!json.ok) throw new Error('chunk ' + i + ' failed');
   }
-  // 組裝
   const doneUrl = _cloudApiUrl + '?action=wdone&key=' + encodeURIComponent(key) + '&n=' + chunks.length;
-  const resp = await fetch(doneUrl);
-  const json = await resp.json();
+  const json = await jsonpFetch(doneUrl);
   return json.ok;
 }
 
@@ -2247,8 +2270,7 @@ async function cloudPullAll() {
   if (!_isCloudEnabled()) return false;
   _updateCloudLabel('下載中...', 'cloud-status syncing');
   try {
-    const resp = await fetch(_cloudApiUrl + '?key=__all__');
-    const json = await resp.json();
+    const json = await jsonpFetch(_cloudApiUrl + '?key=__all__');
     if (!json.ok || !json.data) throw new Error('回應格式錯誤');
     const d = json.data;
     let changed = false;

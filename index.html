@@ -2163,48 +2163,34 @@ async function cloudPush(items) {
   let ok = 0;
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
-    _updateCloudLabel('同步中 ' + (i+1) + '/' + items.length, 'cloud-status syncing');
+    _updateCloudLabel('同步中 ' + (i+1) + '/' + items.length + ' (' + item.key.replace('atelier_','') + ')', 'cloud-status syncing');
     try {
-      // 用隱藏 iframe + form 逐筆送出
-      await new Promise((resolve, reject) => {
-        const id = 'cf_' + Date.now() + '_' + i;
-        const iframe = document.createElement('iframe');
-        iframe.name = id;
-        iframe.style.display = 'none';
-        document.body.appendChild(iframe);
-
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = _cloudApiUrl;
-        form.target = id;
-
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = 'payload';
-        input.value = JSON.stringify({ key: item.key, value: item.value });
-        form.appendChild(input);
-
-        document.body.appendChild(form);
-        form.submit();
-
-        // 等待足夠時間讓 GAS 處理
-        setTimeout(() => {
-          try { document.body.removeChild(form); } catch(e) {}
-          try { document.body.removeChild(iframe); } catch(e) {}
-          resolve();
-        }, 10000);
+      await fetch(_cloudApiUrl, {
+        method: 'POST',
+        body: JSON.stringify({ key: item.key, value: item.value }),
+        mode: 'no-cors'
       });
+      // 等 GAS 處理完成
+      await new Promise(r => setTimeout(r, 5000));
       ok++;
     } catch(e) {
       console.error('推送失敗:', item.key, e);
     }
   }
-  // 驗證
+  // 用 GET 驗證是否成功寫入
+  _updateCloudLabel('驗證中...', 'cloud-status syncing');
+  await new Promise(r => setTimeout(r, 3000));
   try {
     const resp = await fetch(_cloudApiUrl + '?key=__all__');
     const json = await resp.json();
     const count = json.ok ? Object.keys(json.data || {}).length : 0;
-    _updateCloudLabel('雲端 ✓ (' + count + '項)', 'cloud-status ok');
+    if (count > 0) {
+      _updateCloudLabel('雲端 ✓ (' + count + '項)', 'cloud-status ok');
+      toast('雲端同步完成：' + count + ' 項資料');
+    } else {
+      _updateCloudLabel('寫入失敗', 'cloud-status error');
+      toast('雲端寫入失敗，請確認 Apps Script 已更新並重新部署');
+    }
   } catch(e) {
     _updateCloudLabel(ok + '/' + items.length + ' 已送出', 'cloud-status ok');
   }

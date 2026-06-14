@@ -2157,50 +2157,57 @@ function _updateCloudLabel(text, cls) {
   }
 }
 
-function cloudPush(items) {
-  if (!_isCloudEnabled()) return Promise.resolve();
-  _updateCloudLabel('同步中...', 'cloud-status syncing');
-  return new Promise(resolve => {
-    // 用隱藏 iframe + form 提交，避免 CORS 問題
-    const id = 'cf_' + Date.now();
-    const iframe = document.createElement('iframe');
-    iframe.name = id;
-    iframe.style.display = 'none';
-    document.body.appendChild(iframe);
+async function cloudPush(items) {
+  if (!_isCloudEnabled()) return;
+  _updateCloudLabel('同步中 0/' + items.length, 'cloud-status syncing');
+  let ok = 0;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    _updateCloudLabel('同步中 ' + (i+1) + '/' + items.length, 'cloud-status syncing');
+    try {
+      // 用隱藏 iframe + form 逐筆送出
+      await new Promise((resolve, reject) => {
+        const id = 'cf_' + Date.now() + '_' + i;
+        const iframe = document.createElement('iframe');
+        iframe.name = id;
+        iframe.style.display = 'none';
+        document.body.appendChild(iframe);
 
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = _cloudApiUrl;
-    form.target = id;
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = _cloudApiUrl;
+        form.target = id;
 
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = 'payload';
-    input.value = JSON.stringify({ items });
-    form.appendChild(input);
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'payload';
+        input.value = JSON.stringify({ key: item.key, value: item.value });
+        form.appendChild(input);
 
-    document.body.appendChild(form);
-    form.submit();
+        document.body.appendChild(form);
+        form.submit();
 
-    // 無法跨域讀取 iframe 回應，等幾秒後用 GET 驗證
-    setTimeout(async () => {
-      try { document.body.removeChild(form); } catch(e) {}
-      try { document.body.removeChild(iframe); } catch(e) {}
-      // 驗證是否寫入成功
-      try {
-        const resp = await fetch(_cloudApiUrl + '?key=__all__');
-        const json = await resp.json();
-        if (json.ok && json.data && Object.keys(json.data).length > 0) {
-          _updateCloudLabel('雲端 ✓', 'cloud-status ok');
-        } else {
-          _updateCloudLabel('驗證中...', 'cloud-status syncing');
-        }
-      } catch(e) {
-        _updateCloudLabel('已送出', 'cloud-status ok');
-      }
-      resolve();
-    }, 8000);
-  });
+        // 等待足夠時間讓 GAS 處理
+        setTimeout(() => {
+          try { document.body.removeChild(form); } catch(e) {}
+          try { document.body.removeChild(iframe); } catch(e) {}
+          resolve();
+        }, 10000);
+      });
+      ok++;
+    } catch(e) {
+      console.error('推送失敗:', item.key, e);
+    }
+  }
+  // 驗證
+  try {
+    const resp = await fetch(_cloudApiUrl + '?key=__all__');
+    const json = await resp.json();
+    const count = json.ok ? Object.keys(json.data || {}).length : 0;
+    _updateCloudLabel('雲端 ✓ (' + count + '項)', 'cloud-status ok');
+  } catch(e) {
+    _updateCloudLabel(ok + '/' + items.length + ' 已送出', 'cloud-status ok');
+  }
 }
 
 function _scheduleCloudPush(key, value) {
